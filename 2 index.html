@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ALPHA AI — Girish Sonwane</title>
+
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono&family=Syne:wght@800&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+<style>
+body { margin:0; overflow:hidden; background:#03020a; color:white; font-family:'DM Mono'; }
+
+video, canvas {
+  position:absolute;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+#video { transform: scaleX(-1); filter: brightness(0.4); }
+canvas { transform: scaleX(-1); }
+
+#bg { z-index:0; }
+
+.top {
+  position:fixed; top:10px; left:50%; transform:translateX(-50%);
+  padding:8px 20px;
+  background:rgba(255,255,255,0.1);
+  border-radius:20px;
+  backdrop-filter:blur(10px);
+  box-shadow:0 0 20px rgba(124,255,196,0.3);
+}
+
+.hud {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  background:rgba(255,255,255,0.1);
+  padding:10px 20px;
+  border-radius:20px;
+  box-shadow:0 0 20px rgba(124,255,196,0.3);
+}
+
+.credit {
+  position:fixed; bottom:10px; left:15px;
+  font-size:11px; color:rgba(255,255,255,0.4);
+}
+.credit strong { color:#7cffc4; }
+
+#splashScreen {
+  position:fixed; width:100%; height:100%;
+  background:#03020a;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  z-index:9999;
+  transition:0.8s;
+}
+#splashScreen.hide { opacity:0; visibility:hidden; }
+
+.logo {
+  font-family:'Syne'; font-size:60px;
+  background:linear-gradient(135deg,#7cffc4,#6bb5ff,#ff6bca);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  animation:glow 2s infinite alternate;
+}
+
+@keyframes glow {
+  from { filter:drop-shadow(0 0 10px #7cffc4); }
+  to { filter:drop-shadow(0 0 25px #ff6bca); }
+}
+
+.loader {
+  width:70px; height:70px;
+  border:2px solid rgba(255,255,255,0.1);
+  border-top:2px solid #7cffc4;
+  border-radius:50%;
+  animation:spin 1s linear infinite;
+  margin:20px;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.brand-credit {
+  position:absolute; bottom:20px;
+  font-size:12px; color:rgba(255,255,255,0.4);
+}
+.brand-credit strong { color:#7cffc4; }
+</style>
+
+</head>
+
+<body>
+
+<div id="splashScreen">
+  <h1 class="logo">ALPHA AI</h1>
+  <div class="loader"></div>
+  <div class="brand-credit">⚡ AI Powered by <strong>Girish Sonwane</strong></div>
+</div>
+
+<canvas id="bg"></canvas> <video id="video" autoplay playsinline></video> <canvas id="fx"></canvas> <canvas id="draw"></canvas>
+
+<div class="top">ALPHA AI</div>
+<div class="hud" id="gesture">Loading...</div>
+<div class="credit">⚡ AI Powered by <strong>Girish Sonwane</strong></div>
+
+<script>
+// SPLASH
+window.onload = () => {
+  setTimeout(()=> document.getElementById("splashScreen").classList.add("hide"), 2500);
+};
+
+// BG ANIMATION
+let bg=document.getElementById("bg"), bctx=bg.getContext("2d");
+function resizeBG(){ bg.width=innerWidth; bg.height=innerHeight; }
+resizeBG(); window.onresize=resizeBG;
+let t=0;
+function animateBG(){
+  requestAnimationFrame(animateBG);
+  let g=bctx.createLinearGradient(0,0,bg.width,bg.height);
+  g.addColorStop(0,`hsl(${t},70%,10%)`);
+  g.addColorStop(1,`hsl(${t+60},70%,5%)`);
+  bctx.fillStyle=g; bctx.fillRect(0,0,bg.width,bg.height);
+  t+=0.3;
+}
+animateBG();
+
+// MAIN
+let video=document.getElementById('video');
+let fx=document.getElementById('fx');
+let ctx=fx.getContext('2d');
+let drawCanvas=document.getElementById('draw');
+let dctx=drawCanvas.getContext('2d');
+let gestureText=document.getElementById('gesture');
+
+let W,H,particles=[],drawing=false,hue=0;
+
+function resize(){
+  W=innerWidth; H=innerHeight;
+  fx.width=W; fx.height=H;
+  drawCanvas.width=W; drawCanvas.height=H;
+}
+resize(); window.addEventListener("resize",resize);
+
+// CAMERA
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+
+    // hide splash when camera works
+    document.getElementById("splashScreen").classList.add("hide");
+
+  } catch (err) {
+    console.log("Camera not available");
+
+    // force remove splash
+    document.getElementById("splashScreen").classList.add("hide");
+
+    // show message
+    document.getElementById("gesture").innerText = "No Camera ❌ (Use Mobile)";
+  }
+}
+
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    document.getElementById("splashScreen").classList.add("hide");
+  }, 3000);
+});
+
+startCamera();
+
+// MEDIAPIPE
+const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+hands.setOptions({maxNumHands:2,minDetectionConfidence:0.7,minTrackingConfidence:0.7});
+hands.onResults(onResults);
+
+const camera=new Camera(video,{
+  onFrame:async()=>{ await hands.send({image:video}); },
+  width:1280,height:720
+});
+camera.start();
+
+// GESTURE
+function detectGesture(lm){
+  let thumb=lm[4], index=lm[8], middle=lm[12];
+  let pinch=Math.hypot(thumb.x-index.x,thumb.y-index.y);
+  let indexUp=index.y<lm[6].y;
+  let middleUp=middle.y<lm[10].y;
+
+  if(pinch<0.05) return "pinch";
+  if(indexUp && middleUp) return "peace";
+  if(!indexUp && !middleUp) return "fist";
+  return "none";
+}
+
+// MAIN LOOP
+function onResults(res){
+  ctx.clearRect(0,0,W,H);
+  drawGrid();
+
+  if(!res.multiHandLandmarks){
+    gestureText.innerText="No Hands";
+    return;
+  }
+
+  res.multiHandLandmarks.forEach(lm=>{
+    drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:"#7cffc4"});
+    drawLandmarks(ctx,lm,{color:"#ff6bca",radius:3});
+
+    let g=detectGesture(lm);
+    let x=lm[8].x*W;
+    let y=lm[8].y*H;
+
+    if(g==="pinch"){
+      gestureText.innerText="Drawing ✍";
+      drawLine(x,y);
+      createParticles(x,y);
+    }
+    else if(g==="peace"){
+      gestureText.innerText="Shapes ✌";
+      drawShape(x,y);
+      drawing=false;
+    }
+    else if(g==="fist"){
+      gestureText.innerText="Clear 👊";
+      dctx.clearRect(0,0,W,H);
+      drawing=false;
+    }
+    else{
+      gestureText.innerText="Tracking...";
+      drawing=false;
+    }
+  });
+}
+
+// DRAW
+function drawLine(x,y){
+  dctx.strokeStyle=`hsl(${hue},100%,60%)`;
+  dctx.lineWidth=6;
+  dctx.shadowBlur=20;
+  dctx.shadowColor=dctx.strokeStyle;
+
+  if(!drawing){
+    dctx.beginPath();
+    dctx.moveTo(x,y);
+    drawing=true;
+  } else {
+    dctx.lineTo(x,y);
+    dctx.stroke();
+  }
+  hue+=2;
+}
+
+// SHAPE
+function drawShape(x,y){
+  ctx.strokeStyle="#ff6bca";
+  ctx.strokeRect(x-20,y-20,40,40);
+}
+
+// GRID
+function drawGrid(){
+  ctx.strokeStyle="rgba(255,255,255,0.05)";
+  for(let x=0;x<W;x+=50){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+  }
+  for(let y=0;y<H;y+=50){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+  }
+}
+
+// PARTICLES
+function createParticles(x,y){
+  for(let i=0;i<15;i++){
+    particles.push({
+      x,y,
+      vx:(Math.random()-0.5)*6,
+      vy:(Math.random()-0.5)*6,
+      life:50,
+      size:Math.random()*4+2
+    });
+  }
+}
+
+// ANIMATE
+function animate(){
+  requestAnimationFrame(animate);
+
+  particles.forEach((p,i)=>{
+    p.x+=p.vx; p.y+=p.vy; p.life--;
+
+    ctx.fillStyle=`hsl(${hue},100%,60%)`;
+    ctx.shadowBlur=15;
+    ctx.shadowColor=ctx.fillStyle;
+
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
+    ctx.fill();
+
+    if(p.life<=0) particles.splice(i,1);
+  });
+}
+animate();
+</script>
+
+</body>
+</html>
